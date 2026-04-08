@@ -36,28 +36,48 @@ function translit($str) {
 }
 
 function clean($name, $is_dir = false) {
-    // Декодируем URL (на случай если имя содержит %20, %2C и т.д.)
+    // Декодируем URL-символы (например, %20 в пробелы) для корректной обработки
     $name = urldecode($name);
 
     if ($is_dir) {
+        // Преобразуем кириллицу в латиницу (транслитерация)
         $name = translit($name);
+        // Заменяем любые символы, кроме латинских букв, цифр и подчеркивания, на "_"
         $name = preg_replace('/[^a-zA-Z0-9_]/', '_', $name);
+        // Схлопываем несколько подчеркиваний подряд в одно
         $name = preg_replace('/_+/', '_', $name);
+        // Обрезаем строку до первых 14 символов
         $name = substr($name, 0, 14);
+        // Убираем подчеркивания по краям; если строка пустая, даем имя 'folder'
         $result = trim($name, '_') ?: 'folder';
+        // Записываем результат обработки директории в лог
         log_msg("  [DIR] '$name' -> '$result'");
         return $result;
     } else {
+        // Разбираем путь файла на составляющие (путь, имя, расширение)
         $path = pathinfo($name);
+        // Сохраняем расширение с точкой, если оно существует
         $ext = isset($path['extension']) ? '.' . $path['extension'] : '';
+        // Извлекаем только имя файла без расширения
         $orig_name = $path['filename'];
 
+        // Транслитерируем имя файла
         $name = translit($orig_name);
+        // Заменяем спецсимволы и пробелы на подчеркивание
         $name = preg_replace('/[^a-zA-Z0-9_]/', '_', $name);
+        // Убираем дублирующиеся подчеркивания
         $name = preg_replace('/_+/', '_', $name);
+        // Ограничиваем длину имени (без расширения) до 14 символов
         $name = substr($name, 0, 14);
 
-        $result = (trim($name, '_') ?: 'file') . $ext;
+        // Чистим края, возвращаем 'file', если пусто, и приклеиваем расширение
+        $name = trim($name, '_');
+        // if ($name === '') {
+        //     $name = 'file';
+        // }
+        $result = $name . $ext;
+
+        // Логируем процесс преобразования файла
         log_msg("  [FILE] '$orig_name' -> '$result'");
         return $result;
     }
@@ -244,7 +264,7 @@ if (isset($_POST['action']) && $_POST['action'] === 'start') {
             $mapping[str_replace(' ', '%20', $old_rel)] = str_replace(' ', '%20', $new_rel);
 
             // 6. Путь с URL-encoded именем файла -> новый путь
-            // (для ссылок вида "../../assets/img/folder/%D0%91%D1%83%D0%BA%D0%BB.jpg")
+            // (для ссылок вида "../../assets/img/folder/Buklfilefile.jpg")
             $old_dir = dirname($old_rel);
             $old_encoded_name = rawurlencode($item['old_name']);
             if ($old_dir === '.') {
