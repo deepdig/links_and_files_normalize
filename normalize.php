@@ -36,51 +36,91 @@ function translit($str) {
 }
 
 function clean($name, $is_dir = false) {
-    // Декодируем URL-символы (например, %20 в пробелы) для корректной обработки
     $name = urldecode($name);
 
     if ($is_dir) {
-        // Преобразуем кириллицу в латиницу (транслитерация)
         $name = translit($name);
-        // Заменяем любые символы, кроме латинских букв, цифр и подчеркивания, на "_"
         $name = preg_replace('/[^a-zA-Z0-9_]/', '_', $name);
-        // Схлопываем несколько подчеркиваний подряд в одно
         $name = preg_replace('/_+/', '_', $name);
-        // Обрезаем строку до первых 14 символов
         $name = substr($name, 0, 14);
-        // Убираем подчеркивания по краям; если строка пустая, даем имя 'folder'
         $result = trim($name, '_') ?: 'folder';
-        // Записываем результат обработки директории в лог
         log_msg("  [DIR] '$name' -> '$result'");
         return $result;
     } else {
-        // Разбираем путь файла на составляющие (путь, имя, расширение)
         $path = pathinfo($name);
-        // Сохраняем расширение с точкой, если оно существует
         $ext = isset($path['extension']) ? '.' . $path['extension'] : '';
-        // Извлекаем только имя файла без расширения
         $orig_name = $path['filename'];
 
-        // Транслитерируем имя файла
         $name = translit($orig_name);
-        // Заменяем спецсимволы и пробелы на подчеркивание
         $name = preg_replace('/[^a-zA-Z0-9_]/', '_', $name);
-        // Убираем дублирующиеся подчеркивания
         $name = preg_replace('/_+/', '_', $name);
-        // Ограничиваем длину имени (без расширения) до 14 символов
         $name = substr($name, 0, 14);
 
-        // Чистим края, возвращаем 'file', если пусто, и приклеиваем расширение
         $name = trim($name, '_');
-        // if ($name === '') {
-        //     $name = 'file';
-        // }
         $result = $name . $ext;
 
-        // Логируем процесс преобразования файла
         log_msg("  [FILE] '$orig_name' -> '$result'");
         return $result;
     }
+}
+
+// Вспомогательная функция для генерации уникального имени папки
+function generate_unique_dir_name($dir, $base_name, $max_len = 14) {
+    $base_name = rtrim($base_name, '_');
+    if ($base_name === '') $base_name = 'folder';
+    
+    $counter = 1;
+    do {
+        $suffix = '_' . $counter;
+        $available_len = $max_len - strlen($suffix);
+        $truncated_base = substr($base_name, 0, max(1, $available_len));
+        $candidate = $truncated_base . $suffix;
+        
+        // Нормализация: схлопывание подчеркиваний и обрезка краев
+        $candidate = preg_replace('/_+/', '_', $candidate);
+        $candidate = trim($candidate, '_');
+        if ($candidate === '') $candidate = 'folder';
+        
+        $candidate_path = $dir . '/' . $candidate;
+        $counter++;
+        
+        if ($counter > 999) {
+            return null; // Не удалось создать уникальное имя
+        }
+    } while (file_exists($candidate_path));
+    
+    return $candidate;
+}
+
+// Вспомогательная функция для генерации уникального имени файла
+function generate_unique_file_name($dir, $full_name, $max_len = 14) {
+    $path_info = pathinfo($full_name);
+    $base_name = isset($path_info['filename']) ? rtrim($path_info['filename'], '_') : '';
+    if ($base_name === '') $base_name = 'file';
+    $ext = isset($path_info['extension']) ? '.' . $path_info['extension'] : '';
+    
+    $counter = 1;
+    do {
+        $suffix = '_' . $counter;
+        $available_len = $max_len - strlen($suffix);
+        $truncated_base = substr($base_name, 0, max(1, $available_len));
+        $candidate_filename = $truncated_base . $suffix;
+        
+        // Нормализация
+        $candidate_filename = preg_replace('/_+/', '_', $candidate_filename);
+        $candidate_filename = trim($candidate_filename, '_');
+        if ($candidate_filename === '') $candidate_filename = 'file';
+        
+        $candidate_name = $candidate_filename . $ext;
+        $candidate_path = $dir . '/' . $candidate_name;
+        $counter++;
+        
+        if ($counter > 999) {
+            return null;
+        }
+    } while (file_exists($candidate_path));
+    
+    return $candidate_name;
 }
 
 if (isset($_POST['action']) && $_POST['action'] === 'start') {
@@ -90,7 +130,6 @@ if (isset($_POST['action']) && $_POST['action'] === 'start') {
         log_msg("=== " . date('Y-m-d H:i:s') . " ===");
         log_msg("ШАГ 1: Сбор всех путей");
 
-        // Собираем все пути
         $all_paths = [];
         $iterator = new RecursiveIteratorIterator(
             new RecursiveDirectoryIterator(ROOT, RecursiveDirectoryIterator::SKIP_DOTS),
@@ -103,7 +142,6 @@ if (isset($_POST['action']) && $_POST['action'] === 'start') {
 
         log_msg("Найдено путей: " . count($all_paths));
 
-        // Сортируем: сначала папки, потом файлы; от глубоких к поверхностным
         usort($all_paths, function($a, $b) {
             $a_is_dir = is_dir($a) ? 1 : 0;
             $b_is_dir = is_dir($b) ? 1 : 0;
@@ -115,7 +153,6 @@ if (isset($_POST['action']) && $_POST['action'] === 'start') {
 
         log_msg("ШАГ 2: Сбор информации для переименования");
 
-        // Сначала собираем все элементы с их текущими путями
         $all_items = [];
 
         foreach ($all_paths as $path) {
@@ -137,7 +174,6 @@ if (isset($_POST['action']) && $_POST['action'] === 'start') {
 
         log_msg("ШАГ 3: Переименование папок");
 
-        // Переименовываем папки
         $renamed_dirs = [];
         $dirs = array_filter($all_items, function($item) { return $item['is_dir']; });
 
@@ -148,17 +184,23 @@ if (isset($_POST['action']) && $_POST['action'] === 'start') {
         foreach ($dirs as $item) {
             $new_path = $item['dir'] . '/' . $item['new_name'];
 
-            // Если имя не изменилось - пропускаем
             if ($item['old_name'] === $item['new_name']) {
                 log_msg("  ⊘ Папка пропущена: {$item['old_name']}");
                 continue;
             }
 
-            // Если папка с таким именем уже существует - пропускаем (избегаем дубликатов)
+            // === МОДИФИКАЦИЯ: Генерация уникального имени при дубликате ===
             if (file_exists($new_path)) {
-                log_msg("  ⊘ Папка пропущена (дубликат): {$item['old_name']}");
-                continue;
+                $unique_name = generate_unique_dir_name($item['dir'], $item['new_name']);
+                if ($unique_name === null) {
+                    log_msg("  ✗ Не удалось создать уникальное имя для папки: {$item['old_name']}");
+                    continue;
+                }
+                $item['new_name'] = $unique_name;
+                $new_path = $item['dir'] . '/' . $unique_name;
+                log_msg("  ⚡ Дубликат: {$item['old_name']} -> {$item['new_name']}");
             }
+            // === КОНЕЦ МОДИФИКАЦИИ ===
 
             log_msg("Переименование папки: {$item['old_name']} -> {$item['new_name']}");
 
@@ -172,7 +214,6 @@ if (isset($_POST['action']) && $_POST['action'] === 'start') {
                     ];
                     log_msg("  ✓ Папка переименована");
 
-                    // Обновляем пути во всех элементах
                     foreach ($all_items as &$sub_item) {
                         if (strpos($sub_item['old_path'], $item['old_path'] . '/') === 0) {
                             $sub_item['old_path'] = str_replace($item['old_path'], $new_path, $sub_item['old_path']);
@@ -187,7 +228,6 @@ if (isset($_POST['action']) && $_POST['action'] === 'start') {
 
         log_msg("ШАГ 4: Переименование файлов");
 
-        // Переименовываем файлы
         $renamed_files = [];
         $files = array_filter($all_items, function($item) { return !$item['is_dir']; });
 
@@ -199,17 +239,23 @@ if (isset($_POST['action']) && $_POST['action'] === 'start') {
 
             $new_path = $item['dir'] . '/' . $item['new_name'];
 
-            // Если имя не изменилось - пропускаем
             if ($item['old_name'] === $item['new_name']) {
                 log_msg("  ⊘ Файл пропущен: {$item['old_name']}");
                 continue;
             }
 
-            // Если файл с таким именем уже существует - пропускаем (избегаем дубликатов)
+            // === МОДИФИКАЦИЯ: Генерация уникального имени при дубликате ===
             if (file_exists($new_path)) {
-                log_msg("  ⊘ Файл пропущен (дубликат): {$item['old_name']}");
-                continue;
+                $unique_name = generate_unique_file_name($item['dir'], $item['new_name']);
+                if ($unique_name === null) {
+                    log_msg("  ✗ Не удалось создать уникальное имя для файла: {$item['old_name']}");
+                    continue;
+                }
+                $item['new_name'] = $unique_name;
+                $new_path = $item['dir'] . '/' . $unique_name;
+                log_msg("  ⚡ Дубликат: {$item['old_name']} -> {$item['new_name']}");
             }
+            // === КОНЕЦ МОДИФИКАЦИИ ===
 
             log_msg("Переименование файла: {$item['old_name']} -> {$item['new_name']}");
 
@@ -230,7 +276,6 @@ if (isset($_POST['action']) && $_POST['action'] === 'start') {
         $renamed_count = count($renamed_dirs) + count($renamed_files);
         log_msg("Всего переименовано: $renamed_count");
 
-        // === ШАГ 5: СОЗДАЕМ МАППИНГ С ВСЕМИ ВАРИАНТАМИ ===
         log_msg("ШАГ 5: Создание маппинга");
 
         $mapping = [];
@@ -242,29 +287,21 @@ if (isset($_POST['action']) && $_POST['action'] === 'start') {
 
             log_msg("Маппинг: $old_rel -> $new_rel");
 
-            // 1. Полный относительный путь
             $mapping[$old_rel] = $new_rel;
-
-            // 2. Только имя файла/папки
             $mapping[$item['old_name']] = $item['new_name'];
 
-            // 3. URL-encoded версия старого пути -> новый путь
             $old_encoded_full = rawurlencode($old_rel);
             $old_encoded_full = str_replace('%2F', '/', $old_encoded_full);
             $mapping[$old_encoded_full] = $new_rel;
 
-            // 4. Все варианты URL encoding для полного пути
             $old_encoded = rawurlencode($old_rel);
             $new_encoded = rawurlencode($new_rel);
             $old_encoded = str_replace('%2F', '/', $old_encoded);
             $new_encoded = str_replace('%2F', '/', $new_encoded);
             $mapping[$old_encoded] = $new_encoded;
 
-            // 5. С %20 вместо пробелов
             $mapping[str_replace(' ', '%20', $old_rel)] = str_replace(' ', '%20', $new_rel);
 
-            // 6. Путь с URL-encoded именем файла -> новый путь
-            // (для ссылок вида "../../assets/img/folder/Buklfilefile.jpg")
             $old_dir = dirname($old_rel);
             $old_encoded_name = rawurlencode($item['old_name']);
             if ($old_dir === '.') {
@@ -273,21 +310,16 @@ if (isset($_POST['action']) && $_POST['action'] === 'start') {
                 $mapping[$old_dir . '/' . $old_encoded_name] = $new_rel;
             }
 
-            // 6a. Варианты с ../ для относительных ссылок
             $prefixes = ['../', '../../', '../../../', '../../../../'];
             foreach ($prefixes as $prefix) {
                 $mapping[$prefix . $old_rel] = $prefix . $new_rel;
                 $mapping[$prefix . $old_dir . '/' . $old_encoded_name] = $prefix . $new_rel;
             }
 
-            // 7. С закодированным именем
             $mapping[rawurlencode($item['old_name'])] = rawurlencode($item['new_name']);
             $mapping[str_replace(' ', '%20', $item['old_name'])] = $item['new_name'];
-
-            // 8. URL-encoded имя файла -> новое имя (для ссылок в HTML)
             $mapping[rawurlencode($item['old_name'])] = $item['new_name'];
 
-            // 9. Все сегменты пути
             $old_parts = explode('/', $old_rel);
             $new_parts = explode('/', $new_rel);
 
@@ -296,12 +328,10 @@ if (isset($_POST['action']) && $_POST['action'] === 'start') {
                 $new_seg_path = implode('/', array_slice($new_parts, 0, $i + 1));
                 $mapping[$old_seg_path] = $new_seg_path;
 
-                // URL-encoded версия сегмента пути
                 $old_seg_path_encoded = rawurlencode($old_seg_path);
                 $old_seg_path_encoded = str_replace('%2F', '/', $old_seg_path_encoded);
                 $mapping[$old_seg_path_encoded] = $new_seg_path;
 
-                // Отдельно каждый сегмент
                 $old_seg = $old_parts[$i];
                 $new_seg = $new_parts[$i];
 
@@ -318,12 +348,10 @@ if (isset($_POST['action']) && $_POST['action'] === 'start') {
             }
         }
 
-        // Дополнительно: создаём маппинг для всех возможных комбинаций спецсимволов
         foreach ($all_renamed as $item) {
             $old_name = $item['old_name'];
             $new_name = $item['new_name'];
 
-            // Все варианты написания старого имени
             $variants = [
                 $old_name,
                 str_replace(' ', '%20', $old_name),
@@ -343,12 +371,10 @@ if (isset($_POST['action']) && $_POST['action'] === 'start') {
             }
         }
 
-        // Создаём маппинг для полных путей с разными вариантами кодирования
         foreach ($all_renamed as $item) {
             $old_rel = str_replace(ROOT . '/', '', $item['old_path']);
             $new_rel = str_replace(ROOT . '/', '', $item['new_path']);
 
-            // Заменяем все возможные спецсимволы в старом пути
             $old_variants = [
                 $old_rel,
                 str_replace(' ', '%20', $old_rel),
@@ -370,7 +396,6 @@ if (isset($_POST['action']) && $_POST['action'] === 'start') {
 
         log_msg("Всего записей в маппинге: " . count($mapping));
 
-        // === ШАГ 6: Поиск текстовых файлов ===
         log_msg("ШАГ 6: Поиск текстовых файлов");
 
         $text_files = [];
@@ -391,10 +416,8 @@ if (isset($_POST['action']) && $_POST['action'] === 'start') {
 
         log_msg("Найдено текстовых файлов: " . count($text_files));
 
-        // === ШАГ 7: Обновление ссылок ===
         log_msg("ШАГ 7: Обновление ссылок");
 
-        // Сортируем ключи по длине (самые длинные первыми)
         $keys = array_keys($mapping);
         usort($keys, function($a, $b) {
             return strlen($b) - strlen($a);
@@ -412,12 +435,10 @@ if (isset($_POST['action']) && $_POST['action'] === 'start') {
             $original = $content;
             $file_replacements = 0;
 
-            // Заменяем все найденные соответствия
             foreach ($keys as $search) {
                 $replace = $mapping[$search];
                 if ($search === $replace) continue;
 
-                // Простая замена - ищем все вхождения
                 $count = 0;
                 $content = str_replace($search, $replace, $content, $count);
 
